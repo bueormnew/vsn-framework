@@ -17,7 +17,7 @@ Uso rápido:
     output = model.predict(tokens)
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 # Ensure internal packages are importable
 import sys
