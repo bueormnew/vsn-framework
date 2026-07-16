@@ -17,7 +17,7 @@ Uso rápido:
     output = model.predict(tokens)
 """
 
-__version__ = "0.1.4"
+__version__ = "0.1.5"
 
 from vsn_framework.api import VSN, QuickModel
 from vsn_framework.router import DataRouter, ArithmeticRouter, TextRouter
