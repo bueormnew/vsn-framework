@@ -135,15 +135,16 @@ El bloque fundamental de VSN. Evolución del VGB v1 que añade **comunicación e
 
 **Resultado**: VGB v2 alcanza 99.6% accuracy en aritmética donde VGB v1 se estanca en 38%.
 
-### Diferencia v1 vs v2
+### Diferencia v1 vs v2 vs v3
 
-| Aspecto | VGB v1 | VGB v2 |
-|---------|--------|--------|
-| Procesamiento | Per-voxel (independiente) | Con spatial mixing (cruzado) |
-| Comunicación entre posiciones | Solo vía memoria M (débil) | Directa vía Linear(N,N) |
-| Aritmética (5K datos, 30 ep) | 38% token acc, 0% exact | **99.6% token acc, 100% TF** |
-| Parámetros extra | — | +N² por bloque (mínimo) |
-| Pasos | 6 | 7 |
+| Aspecto | VGB v1 | VGB v2 | VGB v3 |
+|---------|--------|--------|--------|
+| Spatial mixing | Ninguno (per-voxel) | Bidireccional | **Causal** (triangular) |
+| Generación | No funciona | Repetitiva (ve futuro) | **Coherente** |
+| Uso ideal | Investigación | Clasificación, tareas no-autoregresivas | **Lenguaje, generación** |
+| Pasos | 6 | 7 | 7 |
+
+**VGB v3** es la versión recomendada para tareas de generación de texto. El cambio es mínimo: aplica una máscara triangular inferior (`tril`) al peso del spatial mixing, garantizando que la posición `t` solo vea `0..t`. Esto hace que el entrenamiento (teacher forcing) y la generación (autoregresiva) sean consistentes.
 
 ### Propagación sobre el eje X
 
@@ -269,7 +270,10 @@ model = VSNModel(config)
 ### Selección de bloque VGB
 
 ```python
-# VGB v2 (recomendado — con spatial mixing)
+# VGB v3 (recomendado para generación de texto — causal mixing)
+model = VSN.create("small", vgb_version="v3")
+
+# VGB v2 (bidireccional — para clasificación, regresión)
 model = VSN.create("small", vgb_version="v2")
 
 # VGB v1 (original — per-voxel, para investigación)

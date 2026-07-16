@@ -18,6 +18,7 @@ from vsn.core.rms_norm import RMSNorm
 from vsn.core.transitions import TransitionQ
 from vsn.core.vgb import VGBv1
 from vsn.core.vgb_v2 import VGBv2
+from vsn.core.vgb_v3 import VGBv3
 
 __all__ = [
     "ConfigurationError",
@@ -30,6 +31,7 @@ __all__ = [
     "TransitionQ",
     "VGBv1",
     "VGBv2",
+    "VGBv3",
     "VSNConfig",
     "VSNDecoder",
     "VSNEncoder",

@@ -118,6 +118,7 @@ print(f"Batches per epoch: {len(train_loader)}")
 
 # %%
 from vsn.core.vgb_v2 import VGBv2
+from vsn.core.vgb_v3 import VGBv3
 from vsn.core.rms_norm import RMSNorm
 
 @dataclass
@@ -157,15 +158,15 @@ class VSNForLanguage(nn.Module):
         self.pos_emb = nn.Embedding(config.max_seq_len, config.d_model)
         self.drop = nn.Dropout(config.dropout)
         
-        # VGB v2 encoder blocks
+        # VGB v3 encoder blocks (causal spatial mixing)
         self.encoder_blocks = nn.ModuleList([
-            VGBv2(config.d_model, plane_idx=i, spatial_size=config.max_seq_len)
+            VGBv3(config.d_model, plane_idx=i, spatial_size=config.max_seq_len)
             for i in range(config.n_layers)
         ])
         
-        # VGB v2 decoder blocks
+        # VGB v3 decoder blocks (causal spatial mixing)
         self.decoder_blocks = nn.ModuleList([
-            VGBv2(config.d_model, plane_idx=i, spatial_size=config.max_seq_len)
+            VGBv3(config.d_model, plane_idx=i, spatial_size=config.max_seq_len)
             for i in range(config.n_layers)
         ])
         

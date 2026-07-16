@@ -30,6 +30,7 @@ from vsn.core.input_cache import InputCache
 from vsn.core.positioning import PositioningOperator
 from vsn.core.vgb import VGBv1
 from vsn.core.vgb_v2 import VGBv2
+from vsn.core.vgb_v3 import VGBv3
 
 
 class VSNEncoder(nn.Module):
@@ -71,7 +72,10 @@ class VSNEncoder(nn.Module):
         self.phi = PositioningOperator(X, Y, Z)
 
         # Bloques VGB: seleccionar versión según configuración
-        if vgb_version == "v2":
+        if vgb_version == "v3":
+            spatial_size = Y * Z
+            self.vgb_blocks = nn.ModuleList([VGBv3(d, plane_idx=x, spatial_size=spatial_size) for x in range(X)])
+        elif vgb_version == "v2":
             spatial_size = Y * Z
             self.vgb_blocks = nn.ModuleList([VGBv2(d, plane_idx=x, spatial_size=spatial_size) for x in range(X)])
         else:

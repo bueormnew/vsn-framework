@@ -35,6 +35,7 @@ from torch import Tensor
 from vsn.core.psi import PsiOperator
 from vsn.core.vgb import VGBv1
 from vsn.core.vgb_v2 import VGBv2
+from vsn.core.vgb_v3 import VGBv3
 
 
 class VSNDecoder(nn.Module):
@@ -86,7 +87,12 @@ class VSNDecoder(nn.Module):
         self.vgb_version = vgb_version
 
         # Bloques VGB del decoder: seleccionar versión
-        if vgb_version == "v2":
+        if vgb_version == "v3":
+            spatial_size = Y * Z
+            self.vgb_blocks = nn.ModuleList(
+                [VGBv3(d, plane_idx=x, spatial_size=spatial_size) for x in range(X_dec)]
+            )
+        elif vgb_version == "v2":
             spatial_size = Y * Z
             self.vgb_blocks = nn.ModuleList(
                 [VGBv2(d, plane_idx=x, spatial_size=spatial_size) for x in range(X_dec)]
