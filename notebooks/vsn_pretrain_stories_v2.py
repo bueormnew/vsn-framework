@@ -139,7 +139,7 @@ class VSNLargeConfig:
     vocab_size: int = 50257
     d_model: int = 256        # Mayor dimensión → más capacidad
     n_layers: int = 6         # 6 enc + 6 dec = 12 bloques total
-    max_seq_len: int = 1024   # Máximo de tokens por secuencia
+    max_seq_len: int = 1024   # Ventana de entrenamiento (el modelo genera infinito)
     dropout: float = 0.1
 
 
@@ -147,7 +147,9 @@ class VSNLanguageV2(nn.Module):
     """VSN modelo grande para generación de lenguaje.
     
     - VGB v3 con causal spatial mixing
-    - Soporta longitudes dinámicas (pad a max del batch)
+    - Embeddings posicionales sinusoidales (sin límite fijo)
+    - Entrena con ventana de max_seq_len tokens
+    - Genera texto infinito usando sliding window
     - Compatible con DataParallel para multi-GPU
     """
     
@@ -156,10 +158,9 @@ class VSNLanguageV2(nn.Module):
         self.config = config
         
         self.tok_emb = nn.Embedding(config.vocab_size, config.d_model)
-        self.pos_emb = nn.Embedding(config.max_seq_len, config.d_model)
         self.drop = nn.Dropout(config.dropout)
         
-        # VGB v3 blocks (causal)
+        # VGB v3 blocks (causal) — spatial_size = ventana de entrenamiento
         self.encoder_blocks = nn.ModuleList([
             VGBv3(config.d_model, plane_idx=i, spatial_size=config.max_seq_len)
             for i in range(config.n_layers)
@@ -175,9 +176,30 @@ class VSNLanguageV2(nn.Module):
         # Weight tying
         self.lm_head.weight = self.tok_emb.weight
         
+        # Pre-compute sinusoidal positional encoding (extendible a cualquier longitud)
+        self._build_sin_pos(config.max_seq_len * 2, config.d_model)
+        
         self.apply(self._init_weights)
         n_params = sum(p.numel() for p in self.parameters())
         print(f"VSN Language V2: {n_params:,} parameters ({n_params/1e6:.1f}M)")
+    
+    def _build_sin_pos(self, max_len, d_model):
+        """Construye embeddings posicionales sinusoidales (no entrenables, extensibles)."""
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len).unsqueeze(1).float()
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * -(math.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe.unsqueeze(0))  # (1, max_len, d)
+    
+    def _get_pos_emb(self, seq_len):
+        """Obtiene positional embedding para cualquier longitud."""
+        if seq_len <= self.pe.shape[1]:
+            return self.pe[:, :seq_len, :]
+        # Extender si es necesario (generación más larga que el buffer)
+        self._build_sin_pos(seq_len * 2, self.config.d_model)
+        self.pe = self.pe.to(next(self.parameters()).device)
+        return self.pe[:, :seq_len, :]
     
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
@@ -190,8 +212,8 @@ class VSNLanguageV2(nn.Module):
     def forward(self, idx):
         B, T = idx.shape
         
-        pos = torch.arange(T, device=idx.device).unsqueeze(0)
-        h = self.tok_emb(idx) + self.pos_emb(pos)
+        # Token embedding + positional (sinusoidal, sin límite)
+        h = self.tok_emb(idx) + self._get_pos_emb(T)
         h = self.drop(h)
         
         # (B, T, d) → (B, 1, T, d) para VGB
@@ -212,10 +234,16 @@ class VSNLanguageV2(nn.Module):
     
     @torch.no_grad()
     def generate(self, idx, max_new_tokens=200, temperature=0.8, top_k=50):
-        """Generación autoregresiva."""
+        """Generación autoregresiva con sliding window (tokens infinitos).
+        
+        Usa los últimos max_seq_len tokens como contexto en cada paso.
+        No hay límite en la longitud total generada.
+        """
         self.eval()
         for _ in range(max_new_tokens):
+            # Sliding window: tomar solo los últimos max_seq_len tokens
             idx_cond = idx[:, -self.config.max_seq_len:]
+            
             logits = self(idx_cond)
             logits = logits[:, -1, :] / temperature
             
