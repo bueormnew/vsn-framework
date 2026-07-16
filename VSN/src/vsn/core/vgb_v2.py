@@ -99,7 +99,7 @@ class VGBv2(nn.Module):
             Tuple (F, G, r, M_new) con las mismas shapes que v1.
         """
         B, Y, Z, d = x.shape
-        N = Y * Z  # spatial_size
+        N = Y * Z  # spatial_size actual (puede ser menor que self.spatial_size)
 
         # Paso 1: RMSNorm
         x_norm = self.norm(x)
@@ -109,9 +109,23 @@ class VGBv2(nn.Module):
         x_flat = x_norm.reshape(B, N, d)
         # Normalizar antes del mixing
         x_mix_in = self.spatial_norm(x_flat)
-        # Transponer para aplicar Linear sobre dimensión espacial:
-        # (B, N, d) → (B, d, N) → Linear(N, N) → (B, d, N) → (B, N, d)
-        x_mixed = self.spatial_mix(x_mix_in.transpose(1, 2)).transpose(1, 2)
+        # Transponer: (B, N, d) → (B, d, N)
+        x_t = x_mix_in.transpose(1, 2)  # (B, d, N)
+        
+        # Pad a spatial_size si N < spatial_size (generación con secuencia corta)
+        if N < self.spatial_size:
+            x_t = torch.nn.functional.pad(x_t, (0, self.spatial_size - N))
+        
+        # Linear(spatial_size, spatial_size)
+        x_mixed = self.spatial_mix(x_t)
+        
+        # Truncar de vuelta a N si fue paddeado
+        if N < self.spatial_size:
+            x_mixed = x_mixed[:, :, :N]
+        
+        # Transponer de vuelta: (B, d, N) → (B, N, d)
+        x_mixed = x_mixed.transpose(1, 2)
+        
         # Residual del mixing + reshape back
         x_spatial = (x_flat + x_mixed).reshape(B, Y, Z, d)
 
