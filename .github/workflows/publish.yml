@@ -3,19 +3,24 @@ name: Publish to PyPI
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '**/pyproject.toml'
+      - '**/__init__.py'
 
 permissions:
   contents: write
   id-token: write
 
 jobs:
-  bump-version-and-publish:
+  bump-and-publish:
     runs-on: ubuntu-latest
+    # Skip if the commit was made by the bot (avoid infinite loop)
+    if: "!contains(github.event.head_commit.message, 'bump:')"
+    
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -27,37 +32,32 @@ jobs:
 
       - name: Bump patch version
         run: |
-          # Read current version from pyproject.toml
           CURRENT=$(grep '^version' vsn-framework/pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
           echo "Current version: $CURRENT"
           
-          # Bump patch: 0.1.0 -> 0.1.1
           IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
           NEW_PATCH=$((PATCH + 1))
           NEW_VERSION="$MAJOR.$MINOR.$NEW_PATCH"
           echo "New version: $NEW_VERSION"
           
-          # Update pyproject.toml
+          # Update all version references
           sed -i "s/version = \"$CURRENT\"/version = \"$NEW_VERSION\"/" vsn-framework/pyproject.toml
-          
-          # Update __init__.py
           sed -i "s/__version__ = \"$CURRENT\"/__version__ = \"$NEW_VERSION\"/" vsn-framework/src/vsn_framework/__init__.py
-          
-          # Also sync in VSN and VGB packages
-          sed -i "s/version = \".*\"/version = \"$NEW_VERSION\"/" VSN/pyproject.toml || true
-          sed -i "s/__version__ = \".*\"/__version__ = \"$NEW_VERSION\"/" VSN/src/vsn/__init__.py || true
-          sed -i "s/version = \".*\"/version = \"$NEW_VERSION\"/" VGB/pyproject.toml || true
-          sed -i "s/__version__ = \".*\"/__version__ = \"$NEW_VERSION\"/" VGB/src/vgb/__init__.py || true
+          sed -i "s/version = \"[0-9]*\.[0-9]*\.[0-9]*\"/version = \"$NEW_VERSION\"/" VSN/pyproject.toml || true
+          sed -i "s/__version__ = \"[0-9]*\.[0-9]*\.[0-9]*\"/__version__ = \"$NEW_VERSION\"/" VSN/src/vsn/__init__.py || true
+          sed -i "s/version = \"[0-9]*\.[0-9]*\.[0-9]*\"/version = \"$NEW_VERSION\"/" VGB/pyproject.toml || true
+          sed -i "s/__version__ = \"[0-9]*\.[0-9]*\.[0-9]*\"/__version__ = \"$NEW_VERSION\"/" VGB/src/vgb/__init__.py || true
           
           echo "VERSION=$NEW_VERSION" >> $GITHUB_ENV
 
-      - name: Commit version bump
+      - name: Commit and push version bump
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -A
-          git diff --cached --quiet || git commit -m "bump: v${{ env.VERSION }}"
-          git push
+          git diff --cached --quiet && echo "No changes" && exit 0
+          git commit -m "bump: v${{ env.VERSION }}"
+          git push origin main
 
       - name: Build package
         run: |
