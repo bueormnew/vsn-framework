@@ -1,0 +1,17 @@
+model:
+  vsn:
+    X_enc: 8
+    X_dec: 8
+    Y: 8
+    Z: 8
+    d: 128
+    ics: 256
+    Y_H: 8
+    Z_H: 8
+    d_H: 128
+    p_mode: identity
+    Y_dec: 8
+    Z_dec: 8
+    dgw: 8
+    head_type: text
+    vocab_size: 32000

@@ -1,0 +1,17 @@
+model:
+  vsn:
+    X_enc: 4
+    X_dec: 4
+    Y: 4
+    Z: 4
+    d: 64
+    ics: 64
+    Y_H: 4
+    Z_H: 4
+    d_H: 64
+    p_mode: identity
+    Y_dec: 4
+    Z_dec: 4
+    dgw: 4
+    head_type: text
+    vocab_size: 32000

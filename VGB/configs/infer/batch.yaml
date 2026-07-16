@@ -1,0 +1,5 @@
+infer:
+  batch_size: 4
+  precision: bf16
+  num_windows: 1
+  device: cuda

@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vgb"
+version = "0.1.0"
+description = "VGB (Voxel Gate Block) — framework layer for VSN: CLI, config, training, inference, export"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = [
+    "vsn",
+    "torch>=2.0",
+    "pyyaml>=6.0",
+    "safetensors>=0.3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "hypothesis>=6.0",
+]
+
+[project.scripts]
+vgb = "vgb.cli.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# NOTE: Install vsn first as editable dependency:
+#   pip install -e ../VSN
+#   pip install -e .

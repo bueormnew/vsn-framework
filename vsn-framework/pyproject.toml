@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vsn-framework"
+version = "0.1.0"
+description = "VSN Framework — Volumetric Sequential Network: create, train, and deploy linear-complexity sequence models"
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+authors = [{name = "VSN Project", email = "dalusx64@gmail.com"}]
+readme = "docs/README.md"
+keywords = ["deep-learning", "neural-network", "sequence-model", "volumetric", "linear-complexity", "pytorch"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "torch>=2.0",
+    "typing_extensions>=4.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+full = ["safetensors>=0.3"]
+dev = ["pytest>=7.0", "hypothesis>=6.0"]
+
+[project.urls]
+Homepage = "https://github.com/bueormnew/vsn-framework"
+Repository = "https://github.com/bueormnew/vsn-framework"
+
+[project.scripts]
+vsn = "vgb.cli.main:main"
+
+[tool.setuptools.packages.find]
+where = ["VSN/src", "VGB/src", "vsn-framework/src"]
+include = ["vsn*", "vgb*"]

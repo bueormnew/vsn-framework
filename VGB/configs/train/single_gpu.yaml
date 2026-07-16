@@ -1,0 +1,13 @@
+train:
+  learning_rate: 1.0e-4
+  weight_decay: 0.01
+  max_steps: 100000
+  warmup_steps: 1000
+  grad_clip_norm: 1.0
+  grad_accum_steps: 1
+  batch_size: 8
+  precision: bf16
+  loss_type: cross_entropy
+runtime:
+  strategy: single
+  seed: 42
