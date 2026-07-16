@@ -63,11 +63,10 @@ print(f"Dataset: {len(dataset)} stories")
 class DynamicStoriesDataset(Dataset):
     """Dataset que preserva la longitud natural de cada historia.
     
-    NO trunca a un largo fijo. Cada sample es una historia completa
-    (hasta max_tokens). El collate function se encarga del padding por batch.
+    Trunca a max_tokens (1024). Las historias más largas se cortan.
     """
     
-    def __init__(self, texts, tokenizer, max_tokens=2048, max_samples=200000):
+    def __init__(self, texts, tokenizer, max_tokens=1024, max_samples=200000):
         self.samples = []
         self.max_tokens = max_tokens
         
@@ -75,17 +74,14 @@ class DynamicStoriesDataset(Dataset):
             if i >= max_samples:
                 break
             tokens = tokenizer.encode(item["text"])
-            # Solo incluir si tiene al menos 10 tokens
             if len(tokens) >= 10:
-                # Truncar solo si excede max_tokens
                 tokens = tokens[:max_tokens]
                 self.samples.append(tokens)
         
-        # Estadísticas
         lengths = [len(s) for s in self.samples]
         self.max_len = max(lengths)
         print(f"  Samples: {len(self.samples):,}")
-        print(f"  Max length: {self.max_len} tokens")
+        print(f"  Max length: {self.max_len} tokens (cap: {max_tokens})")
         print(f"  Avg length: {sum(lengths)/len(lengths):.0f} tokens")
         print(f"  Total tokens: {sum(lengths):,}")
     
@@ -97,19 +93,12 @@ class DynamicStoriesDataset(Dataset):
 
 
 def collate_dynamic(batch: List[List[int]]):
-    """Collate que padea al largo máximo del batch (no global).
-    
-    Esto permite que batches con historias cortas sean más eficientes,
-    y batches con historias largas usen toda la secuencia.
-    """
-    max_len = max(len(s) for s in batch)
-    # Limitar a un máximo razonable para memoria
-    max_len = min(max_len + 1, 2049)  # +1 para el target shift
+    """Collate que padea al largo máximo del batch (max 1024)."""
+    max_len = min(max(len(s) for s in batch) + 1, 1025)
     
     inputs = []
     targets = []
     for tokens in batch:
-        # Pad con EOT
         padded = tokens + [EOT_TOKEN] * (max_len - len(tokens))
         padded = padded[:max_len]
         inputs.append(padded[:-1])
@@ -119,7 +108,7 @@ def collate_dynamic(batch: List[List[int]]):
 
 
 print("Procesando dataset...")
-train_dataset = DynamicStoriesDataset(dataset, enc, max_tokens=2048, max_samples=200000)
+train_dataset = DynamicStoriesDataset(dataset, enc, max_tokens=1024, max_samples=200000)
 
 # DataLoader con collate dinámico
 # Batch size por GPU × num_gpus
@@ -150,7 +139,7 @@ class VSNLargeConfig:
     vocab_size: int = 50257
     d_model: int = 256        # Mayor dimensión → más capacidad
     n_layers: int = 6         # 6 enc + 6 dec = 12 bloques total
-    max_seq_len: int = 2048   # Soporta secuencias largas
+    max_seq_len: int = 1024   # Máximo de tokens por secuencia
     dropout: float = 0.1
 
 
@@ -248,7 +237,7 @@ config = VSNLargeConfig(
     vocab_size=VOCAB_SIZE,
     d_model=256,
     n_layers=6,
-    max_seq_len=2048,
+    max_seq_len=1024,
     dropout=0.1,
 )
 model = VSNLanguageV2(config)
@@ -268,17 +257,19 @@ base_model = model.module if hasattr(model, 'module') else model
 
 # %%
 EPOCHS = 3
-LR = 2e-4
-WARMUP_STEPS = 200
+LR = 3e-4
+WARMUP_STEPS = 500
 TOTAL_STEPS = EPOCHS * len(train_loader)
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=0.1, betas=(0.9, 0.95))
 
 def get_lr(step):
+    # Warmup lineal
     if step < WARMUP_STEPS:
         return step / WARMUP_STEPS
+    # Cosine decay con mínimo 30% del LR original (no baja a casi cero)
     progress = (step - WARMUP_STEPS) / max(TOTAL_STEPS - WARMUP_STEPS, 1)
-    return max(0.1, 0.5 * (1 + math.cos(math.pi * progress)))
+    return 0.3 + 0.7 * 0.5 * (1 + math.cos(math.pi * progress))
 
 scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, get_lr)
 
@@ -349,6 +340,18 @@ print()
 for epoch in range(EPOCHS):
     loss, ppl = train_epoch(model, train_loader, optimizer, scheduler, scaler, epoch)
     print(f"\n  ✓ Epoch {epoch+1}/{EPOCHS} — Loss: {loss:.3f}, PPL: {ppl:.1f}")
+    
+    # Guardar checkpoint al final de cada época
+    ckpt_path = f"vsn_stories_epoch{epoch+1}.pt"
+    torch.save({
+        "model_state_dict": base_model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "epoch": epoch + 1,
+        "loss": loss,
+        "config": {"vocab_size": config.vocab_size, "d_model": config.d_model, 
+                   "n_layers": config.n_layers, "max_seq_len": config.max_seq_len},
+    }, ckpt_path)
+    print(f"  💾 Checkpoint saved: {ckpt_path}")
     
     # Sample generation
     print(f"  Sample:")
