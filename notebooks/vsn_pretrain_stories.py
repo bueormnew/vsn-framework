@@ -35,7 +35,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {device}")
 if torch.cuda.is_available():
     print(f"GPU: {torch.cuda.get_device_name()}")
-    print(f"VRAM: {torch.cuda.get_device_properties(0).total_mem / 1e9:.1f} GB")
+    print(f"VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
 
 # %% [markdown]
 # ## 3. Tokenizer (GPT-2)
@@ -45,10 +45,10 @@ import tiktoken
 
 enc = tiktoken.get_encoding("gpt2")
 VOCAB_SIZE = enc.n_vocab  # 50257
-PAD_TOKEN = enc.encode("<|endoftext|>")[0]  # 50256
+PAD_TOKEN = enc.eot_token  # 50256 — end of text token
 
 print(f"Vocab size: {VOCAB_SIZE}")
-print(f"PAD token: {PAD_TOKEN}")
+print(f"PAD/EOT token: {PAD_TOKEN}")
 print(f"Example: '{enc.decode(enc.encode('Once upon a time'))}'")
 
 # %% [markdown]
