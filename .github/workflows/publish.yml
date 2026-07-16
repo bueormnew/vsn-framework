@@ -32,7 +32,7 @@ jobs:
 
       - name: Bump patch version
         run: |
-          CURRENT=$(grep '^version' vsn-framework/pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          CURRENT=$(grep '^version' pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
           echo "Current version: $CURRENT"
           
           IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
@@ -41,8 +41,9 @@ jobs:
           echo "New version: $NEW_VERSION"
           
           # Update all version references
-          sed -i "s/version = \"$CURRENT\"/version = \"$NEW_VERSION\"/" vsn-framework/pyproject.toml
-          sed -i "s/__version__ = \"$CURRENT\"/__version__ = \"$NEW_VERSION\"/" vsn-framework/src/vsn_framework/__init__.py
+          sed -i "s/version = \"$CURRENT\"/version = \"$NEW_VERSION\"/" pyproject.toml
+          sed -i "s/version = \"[0-9]*\.[0-9]*\.[0-9]*\"/version = \"$NEW_VERSION\"/" vsn-framework/pyproject.toml || true
+          sed -i "s/__version__ = \"[0-9]*\.[0-9]*\.[0-9]*\"/__version__ = \"$NEW_VERSION\"/" vsn-framework/src/vsn_framework/__init__.py || true
           sed -i "s/version = \"[0-9]*\.[0-9]*\.[0-9]*\"/version = \"$NEW_VERSION\"/" VSN/pyproject.toml || true
           sed -i "s/__version__ = \"[0-9]*\.[0-9]*\.[0-9]*\"/__version__ = \"$NEW_VERSION\"/" VSN/src/vsn/__init__.py || true
           sed -i "s/version = \"[0-9]*\.[0-9]*\.[0-9]*\"/version = \"$NEW_VERSION\"/" VGB/pyproject.toml || true
@@ -60,11 +61,9 @@ jobs:
           git push origin main
 
       - name: Build package
-        run: |
-          cd vsn-framework
-          python -m build
+        run: python -m build
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: vsn-framework/dist/
+          packages-dir: dist/

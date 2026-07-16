@@ -17,18 +17,7 @@ Uso rápido:
     output = model.predict(tokens)
 """
 
-__version__ = "0.1.3"
-
-# Ensure internal packages are importable
-import sys
-import os
-_pkg_root = os.path.dirname(os.path.abspath(__file__))
-_project_root = os.path.dirname(os.path.dirname(os.path.dirname(_pkg_root)))
-_vsn_src = os.path.join(_project_root, "VSN", "src")
-_vgb_src = os.path.join(_project_root, "VGB", "src")
-for p in [_vsn_src, _vgb_src]:
-    if os.path.isdir(p) and p not in sys.path:
-        sys.path.insert(0, p)
+__version__ = "0.1.4"
 
 from vsn_framework.api import VSN, QuickModel
 from vsn_framework.router import DataRouter, ArithmeticRouter, TextRouter

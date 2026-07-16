@@ -14,7 +14,7 @@
 # ## 1. Instalación
 
 # %%
-# !pip install vsn-framework transformers datasets tiktoken accelerate --quiet
+# !pip install vsn-framework tiktoken datasets --quiet
 
 # %% [markdown]
 # ## 2. Imports y configuración
