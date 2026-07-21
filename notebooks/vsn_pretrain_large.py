@@ -81,6 +81,66 @@ all_texts += load_and_sample("HuggingFaceTB/finemath", "finemath-4plus", n=15000
 # General knowledge / reasoning
 all_texts += load_and_sample("HuggingFaceTB/smoltalk", "all", n=200000, text_field="content")
 
+# ── Benchmark/evaluation datasets reformatted for pre-training ──
+
+def format_humaneval(item):
+    """HumanEval: prompt + canonical_solution as training text."""
+    return item.get("prompt", "") + "\n" + item.get("canonical_solution", "")
+
+def format_mbpp(item):
+    """MBPP: text description + code."""
+    return f"# {item.get('text', '')}\n{item.get('code', '')}"
+
+def format_apps(item):
+    """APPS: problem + solution."""
+    q = item.get("question", "")
+    sols = item.get("solutions", "")
+    if isinstance(sols, str) and sols.startswith("["):
+        try:
+            import json
+            sols = json.loads(sols)[0] if sols != "[]" else ""
+        except: pass
+    return f"Problem: {q}\nSolution:\n{sols}" if sols else ""
+
+def format_mmlu(item):
+    """MMLU: question + choices + answer formatted as text."""
+    q = item.get("question", "")
+    choices = item.get("choices", [])
+    answer = item.get("answer", 0)
+    text = f"Question: {q}\n"
+    for i, c in enumerate(choices):
+        text += f"{'ABCD'[i]}) {c}\n"
+    if isinstance(answer, int) and answer < len(choices):
+        text += f"Answer: {'ABCD'[answer]}) {choices[answer]}"
+    return text
+
+def format_gsm8k(item):
+    """GSM8K: question + answer (chain of thought)."""
+    return f"Question: {item.get('question', '')}\nAnswer: {item.get('answer', '')}"
+
+# Load benchmark datasets
+def load_benchmark(name, config, formatter, n=None, split="train"):
+    try:
+        ds = load_dataset(name, config, split=split, streaming=True, trust_remote_code=True)
+        samples = []
+        for i, item in enumerate(ds):
+            if n and i >= n: break
+            text = formatter(item)
+            if len(text) > 50:
+                samples.append(text)
+        print(f"  ✓ {name}: {len(samples):,} samples (benchmark)")
+        return samples
+    except Exception as e:
+        print(f"  ✗ {name}: {e}")
+        return []
+
+print("\n── Benchmark datasets (reformatted for pre-training) ──")
+all_texts += load_benchmark("openai/openai_humaneval", None, format_humaneval, split="test")
+all_texts += load_benchmark("google-research-datasets/mbpp", "full", format_mbpp, n=1000)
+all_texts += load_benchmark("codeparrot/apps", "introductory", format_apps, n=5000, split="train")
+all_texts += load_benchmark("cais/mmlu", "all", format_mmlu, n=10000, split="auxiliary_train")
+all_texts += load_benchmark("openai/gsm8k", "main", format_gsm8k, n=8000, split="train")
+
 # If some datasets failed, fill with more fineweb
 if len(all_texts) < 800000:
     print(f"\n  Supplementing... (have {len(all_texts):,})")
