@@ -194,15 +194,18 @@ print("Building dataset...")
 train_dataset = ByteChunkDataset(all_texts, seq_len=SEQ_LEN)
 
 # Batch size optimizado para 2× T4 (16GB cada una)
-# Con d=512, seq=2048, batch=4 per GPU → ~12GB VRAM
-BATCH_SIZE = 4 * max(n_gpus, 1)
+# Gradient accumulation: batch efectivo mayor sin más VRAM
+MICRO_BATCH = 4 * max(n_gpus, 1)  # batch real en GPU
+GRAD_ACCUM = 4                     # acumular 4 micro-batches
+EFFECTIVE_BATCH = MICRO_BATCH * GRAD_ACCUM  # = 32 batch efectivo
 
 train_loader = DataLoader(
-    train_dataset, batch_size=BATCH_SIZE, shuffle=True,
+    train_dataset, batch_size=MICRO_BATCH, shuffle=True,
     num_workers=4, drop_last=True, pin_memory=True,
     persistent_workers=True,
 )
-print(f"Batch: {BATCH_SIZE} | Batches/epoch: {len(train_loader):,}")
+print(f"Micro-batch: {MICRO_BATCH} | Grad accum: {GRAD_ACCUM} | Effective batch: {EFFECTIVE_BATCH}")
+print(f"Batches/epoch: {len(train_loader):,}")
 
 # %% [markdown]
 # ## Modelo VSN Large (~350M params)
@@ -327,6 +330,14 @@ if n_gpus > 1:
 model = model.to(device)
 base_model = model.module if hasattr(model, 'module') else model
 
+# torch.compile para fusionar operaciones (~20-30% speedup gratis)
+if hasattr(torch, 'compile'):
+    try:
+        model = torch.compile(model)
+        print("✓ torch.compile enabled")
+    except Exception as e:
+        print(f"torch.compile not available: {e}")
+
 # %% [markdown]
 # ## Entrenamiento: LR alto primera mitad → refinamiento
 #
@@ -336,117 +347,124 @@ base_model = model.module if hasattr(model, 'module') else model
 
 # %%
 EPOCHS = 2
-LR_HIGH = 2e-4      # LR más conservador (era 5e-4 que causaba NaN)
-LR_LOW = 5e-5       # Mínimo más alto para que no caiga tanto
-WARMUP = 500        # Warmup más largo para estabilidad
-TOTAL_STEPS = EPOCHS * len(train_loader)
-HALF_EPOCH = len(train_loader) // 2
+LR_HIGH = 2e-4
+LR_LOW = 5e-5
+WARMUP = 500
+TOTAL_STEPS = EPOCHS * (len(train_loader) // GRAD_ACCUM)  # optimizer steps, not micro-steps
+HALF_EPOCH = len(train_loader) // (2 * GRAD_ACCUM)
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=LR_HIGH, weight_decay=0.1, betas=(0.9, 0.95))
 
 def lr_schedule(step):
-    """Warmup largo → decay MUY lento (linear, no cosine agresivo)."""
-    if step < WARMUP:
-        return step / WARMUP
-    # Decay lineal suave: de 1.0 a ratio a lo largo de todo el training
-    ratio = LR_LOW / LR_HIGH  # 0.25
+    if step < WARMUP: return step / WARMUP
     progress = (step - WARMUP) / max(TOTAL_STEPS - WARMUP, 1)
-    return 1.0 - (1.0 - ratio) * progress  # lineal de 1.0 a 0.25
+    ratio = LR_LOW / LR_HIGH
+    return 1.0 - (1.0 - ratio) * progress
 
 scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_schedule)
 scaler = torch.amp.GradScaler() if torch.cuda.is_available() else None
 use_amp = torch.cuda.is_available()
 
 print(f"Training plan:")
-print(f"  LR: {LR_HIGH} → {LR_LOW} (linear decay, very slow)")
-print(f"  Warmup: {WARMUP} steps")
-print(f"  NO forced phase — stable throughout")
-print(f"  Total steps: {TOTAL_STEPS:,}")
+print(f"  LR: {LR_HIGH} → {LR_LOW} (linear slow decay)")
+print(f"  Warmup: {WARMUP} optimizer steps")
+print(f"  Optimizer steps/epoch: {len(train_loader)//GRAD_ACCUM:,}")
+print(f"  Total optimizer steps: {TOTAL_STEPS:,}")
+print(f"  Grad accumulation: {GRAD_ACCUM} (effective batch = {EFFECTIVE_BATCH})")
 
 # %%
 def train_step(x, y):
-    """Single optimized training step with AMP."""
+    """Single micro-step with AMP. Loss scaled for grad accumulation."""
     if use_amp:
         with torch.amp.autocast('cuda'):
             logits, _ = model(x)
             loss = F.cross_entropy(logits.view(-1, VOCAB_SIZE), y.view(-1), ignore_index=PAD_TOKEN)
+            loss = loss / GRAD_ACCUM
         scaler.scale(loss).backward()
-        scaler.unscale_(optimizer)
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        scaler.step(optimizer)
-        scaler.update()
     else:
         logits, _ = model(x)
         loss = F.cross_entropy(logits.view(-1, VOCAB_SIZE), y.view(-1), ignore_index=PAD_TOKEN)
+        loss = loss / GRAD_ACCUM
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        optimizer.step()
-    optimizer.zero_grad()
-    scheduler.step()
-    return loss.item()
+    return loss.item() * GRAD_ACCUM
 
 print("\n" + "="*70)
-print("  VSN Large Pre-Training: ~150M params, Byte-level, Multi-dataset")
-print("  Infinite memory via Latent H accumulator")
+print("  VSN Pre-Training: ~40M params, Byte-level, Multi-dataset")
+print("  Grad Accum + torch.compile + Latent H")
 print("="*70 + "\n", flush=True)
 
 from tqdm.auto import tqdm
 
 global_step = 0
+opt_step = 0
 t0 = time.time()
 
 for epoch in range(EPOCHS):
     model.train()
     epoch_loss = 0.0
+    n_micro = 0
     
-    pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{EPOCHS}", 
-                dynamic_ncols=True, smoothing=0.1)
+    pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{EPOCHS}", dynamic_ncols=True, smoothing=0.05)
     
     for step, (x, y) in enumerate(pbar):
-        x, y = x.to(device), y.to(device)
-        loss = train_step(x, y)
-        epoch_loss += loss
+        x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
+        loss_val = train_step(x, y)
+        epoch_loss += loss_val
+        n_micro += 1
         global_step += 1
         
-        # Update progress bar
-        al = epoch_loss / (step + 1)
+        # Optimizer step every GRAD_ACCUM
+        if (step + 1) % GRAD_ACCUM == 0:
+            if use_amp:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                optimizer.step()
+            optimizer.zero_grad()
+            scheduler.step()
+            opt_step += 1
+        
+        # Progress bar
+        al = epoch_loss / n_micro
         ppl = math.exp(min(al, 20))
-        lr = scheduler.get_last_lr()[0]
         elapsed = time.time() - t0
-        tok_s = (global_step * BATCH_SIZE * SEQ_LEN) / elapsed
-        phase = "TRAIN"
+        tok_s = (global_step * MICRO_BATCH * SEQ_LEN) / elapsed
+        lr = scheduler.get_last_lr()[0]
+        pbar.set_postfix({'loss': f'{al:.3f}', 'ppl': f'{ppl:.1f}', 'tok/s': f'{tok_s:.0f}', 'lr': f'{lr:.1e}'})
         
-        pbar.set_postfix({
-            'loss': f'{al:.3f}',
-            'ppl': f'{ppl:.1f}',
-            'tok/s': f'{tok_s:.0f}',
-            'lr': f'{lr:.1e}',
-        })
-        
-        # Save at mid-epoch
+        # Mid-epoch save
         if (step + 1) == len(train_loader) // 2:
             ckpt = f"vsn_large_ep{epoch+1}_mid.pt"
-            torch.save({"model": base_model.state_dict(), "step": global_step, 
-                        "loss": al}, ckpt)
-            pbar.write(f"  💾 Mid-epoch save: {ckpt} (loss={al:.3f})")
+            torch.save({"model": base_model.state_dict(), "step": opt_step, "loss": al}, ckpt)
+            pbar.write(f"  💾 Mid: {ckpt} (loss={al:.3f})")
+    
+    # Flush remaining gradients
+    if n_micro % GRAD_ACCUM != 0:
+        if use_amp:
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            optimizer.step()
+        optimizer.zero_grad()
     
     pbar.close()
-    avg_loss = epoch_loss / len(train_loader)
+    avg_loss = epoch_loss / n_micro
     ppl = math.exp(min(avg_loss, 20))
     print(f"\n  ✓ Epoch {epoch+1}/{EPOCHS} — Loss: {avg_loss:.3f}, PPL: {ppl:.1f}")
+    torch.save({"model": base_model.state_dict(), "step": opt_step, "loss": avg_loss}, f"vsn_large_ep{epoch+1}.pt")
+    print(f"  💾 vsn_large_ep{epoch+1}.pt")
     
-    ckpt = f"vsn_large_ep{epoch+1}.pt"
-    torch.save({"model": base_model.state_dict(), "step": global_step, "loss": avg_loss}, ckpt)
-    print(f"  💾 {ckpt}")
-    
-    # Quick generation sample
-    prompt = "Once upon a time there was"
-    prompt_bytes = list(prompt.encode('utf-8'))
+    prompt_bytes = list("Once upon a time there was".encode('utf-8'))
     gen = base_model.generate(prompt_bytes, max_new=300, temperature=0.8)
     print(f"  >>> {bytes(gen).decode('utf-8', errors='replace')[:400]}\n", flush=True)
 
-total_time = time.time() - t0
-print(f"\nTraining complete! {total_time:.0f}s ({total_time/3600:.1f}h)")
+print(f"\nDone! {(time.time()-t0)/3600:.1f}h")
 
 # %% [markdown]
 # ## Generación Final
