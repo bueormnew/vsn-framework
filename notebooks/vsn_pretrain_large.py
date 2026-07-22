@@ -336,36 +336,32 @@ base_model = model.module if hasattr(model, 'module') else model
 
 # %%
 EPOCHS = 2
-LR_HIGH = 5e-4      # LR alto para la fase de aprendizaje forzado
-LR_LOW = 1e-4       # LR mínimo para refinamiento
-WARMUP = 100        # Warmup mínimo
+LR_HIGH = 2e-4      # LR más conservador (era 5e-4 que causaba NaN)
+LR_LOW = 5e-5       # Mínimo más alto para que no caiga tanto
+WARMUP = 500        # Warmup más largo para estabilidad
 TOTAL_STEPS = EPOCHS * len(train_loader)
-HALF_EPOCH = len(train_loader) // 2  # Mitad de una época
+HALF_EPOCH = len(train_loader) // 2
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=LR_HIGH, weight_decay=0.1, betas=(0.9, 0.95))
 
 def lr_schedule(step):
-    """Primera media época: LR alto constante. Resto: cosine decay."""
+    """Warmup largo → decay MUY lento (linear, no cosine agresivo)."""
     if step < WARMUP:
         return step / WARMUP
-    if step < HALF_EPOCH:
-        # Fase 1: LR alto constante (aprendizaje forzado)
-        return 1.0
-    # Fase 2: cosine decay desde LR_HIGH a LR_LOW
-    progress = (step - HALF_EPOCH) / max(TOTAL_STEPS - HALF_EPOCH, 1)
-    ratio = LR_LOW / LR_HIGH
-    return ratio + (1 - ratio) * 0.5 * (1 + math.cos(math.pi * progress))
+    # Decay lineal suave: de 1.0 a ratio a lo largo de todo el training
+    ratio = LR_LOW / LR_HIGH  # 0.25
+    progress = (step - WARMUP) / max(TOTAL_STEPS - WARMUP, 1)
+    return 1.0 - (1.0 - ratio) * progress  # lineal de 1.0 a 0.25
 
 scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_schedule)
 scaler = torch.amp.GradScaler() if torch.cuda.is_available() else None
 use_amp = torch.cuda.is_available()
 
 print(f"Training plan:")
-print(f"  Steps 0-{WARMUP}: warmup")
-print(f"  Steps {WARMUP}-{HALF_EPOCH}: HIGH LR = {LR_HIGH} (forced learning)")
-print(f"  Steps {HALF_EPOCH}-{TOTAL_STEPS}: cosine decay to {LR_LOW} (refinement)")
+print(f"  LR: {LR_HIGH} → {LR_LOW} (linear decay, very slow)")
+print(f"  Warmup: {WARMUP} steps")
+print(f"  NO forced phase — stable throughout")
 print(f"  Total steps: {TOTAL_STEPS:,}")
-print(f"  Save at: mid-epoch and end-epoch")
 
 # %%
 def train_step(x, y):
@@ -418,14 +414,13 @@ for epoch in range(EPOCHS):
         lr = scheduler.get_last_lr()[0]
         elapsed = time.time() - t0
         tok_s = (global_step * BATCH_SIZE * SEQ_LEN) / elapsed
-        phase = "FORCE" if global_step < HALF_EPOCH else "REFINE"
+        phase = "TRAIN"
         
         pbar.set_postfix({
             'loss': f'{al:.3f}',
             'ppl': f'{ppl:.1f}',
             'tok/s': f'{tok_s:.0f}',
             'lr': f'{lr:.1e}',
-            'phase': phase,
         })
         
         # Save at mid-epoch
