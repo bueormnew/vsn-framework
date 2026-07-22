@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vsn-framework"
-version = "0.1.5"
+version = "0.1.9"
 description = "VSN Framework — Volumetric Sequential Network: create, train, and deploy linear-complexity sequence models"
 requires-python = ">=3.10"
 license = {file = "LICENSE"}
