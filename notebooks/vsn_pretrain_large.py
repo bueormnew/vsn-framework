@@ -10,7 +10,7 @@
 # **Memoria infinita**: Estado latente H acumula entre ventanas
 
 # %%
-# !pip install vsn-framework datasets --quiet
+# !pip install vsn-framework datasets tqdm --quiet
 
 # %%
 import os, time, math, random
@@ -236,7 +236,7 @@ class VSNLarge(nn.Module):
     
     d=512, 12 layers, window=2048, byte vocab=257
     """
-    def __init__(self, vocab_size=257, d=512, n_layers=12, window=2048, dropout=0.05):
+    def __init__(self, vocab_size=257, d=384, n_layers=8, window=2048, dropout=0.05):
         super().__init__()
         self.d, self.window, self.n_layers = d, window, n_layers
         self.vocab_size = vocab_size
@@ -321,7 +321,7 @@ class VSNLarge(nn.Module):
         return idx[0].tolist()
 
 # %%
-model = VSNLarge(vocab_size=VOCAB_SIZE, d=512, n_layers=12, window=SEQ_LEN, dropout=0.05)
+model = VSNLarge(vocab_size=VOCAB_SIZE, d=384, n_layers=8, window=SEQ_LEN, dropout=0.05)
 if n_gpus > 1:
     model = nn.DataParallel(model)
 model = model.to(device)
@@ -390,9 +390,11 @@ def train_step(x, y):
     return loss.item()
 
 print("\n" + "="*70)
-print("  VSN Large Pre-Training: 350M params, Byte-level, Multi-dataset")
+print("  VSN Large Pre-Training: ~150M params, Byte-level, Multi-dataset")
 print("  Infinite memory via Latent H accumulator")
 print("="*70 + "\n", flush=True)
+
+from tqdm.auto import tqdm
 
 global_step = 0
 t0 = time.time()
@@ -401,32 +403,39 @@ for epoch in range(EPOCHS):
     model.train()
     epoch_loss = 0.0
     
-    for step, (x, y) in enumerate(train_loader):
+    pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{EPOCHS}", 
+                dynamic_ncols=True, smoothing=0.1)
+    
+    for step, (x, y) in enumerate(pbar):
         x, y = x.to(device), y.to(device)
         loss = train_step(x, y)
         epoch_loss += loss
         global_step += 1
         
-        # Log every 200 steps
-        if (step + 1) % 200 == 0:
-            al = epoch_loss / (step + 1)
-            ppl = math.exp(min(al, 20))
-            elapsed = time.time() - t0
-            tok_s = (global_step * BATCH_SIZE * SEQ_LEN) / elapsed
-            lr = scheduler.get_last_lr()[0]
-            phase = "FORCE" if global_step < HALF_EPOCH else "REFINE"
-            print(f"  [{phase}] Ep{epoch+1} {step+1:6d}/{len(train_loader)} | "
-                  f"Loss:{al:.3f} PPL:{ppl:.1f} | {tok_s:.0f} tok/s | "
-                  f"LR:{lr:.2e} [{elapsed:.0f}s]", flush=True)
+        # Update progress bar
+        al = epoch_loss / (step + 1)
+        ppl = math.exp(min(al, 20))
+        lr = scheduler.get_last_lr()[0]
+        elapsed = time.time() - t0
+        tok_s = (global_step * BATCH_SIZE * SEQ_LEN) / elapsed
+        phase = "FORCE" if global_step < HALF_EPOCH else "REFINE"
+        
+        pbar.set_postfix({
+            'loss': f'{al:.3f}',
+            'ppl': f'{ppl:.1f}',
+            'tok/s': f'{tok_s:.0f}',
+            'lr': f'{lr:.1e}',
+            'phase': phase,
+        })
         
         # Save at mid-epoch
         if (step + 1) == len(train_loader) // 2:
             ckpt = f"vsn_large_ep{epoch+1}_mid.pt"
             torch.save({"model": base_model.state_dict(), "step": global_step, 
-                        "loss": epoch_loss/(step+1)}, ckpt)
-            print(f"  💾 Mid-epoch save: {ckpt}", flush=True)
+                        "loss": al}, ckpt)
+            pbar.write(f"  💾 Mid-epoch save: {ckpt} (loss={al:.3f})")
     
-    # End of epoch
+    pbar.close()
     avg_loss = epoch_loss / len(train_loader)
     ppl = math.exp(min(avg_loss, 20))
     print(f"\n  ✓ Epoch {epoch+1}/{EPOCHS} — Loss: {avg_loss:.3f}, PPL: {ppl:.1f}")
